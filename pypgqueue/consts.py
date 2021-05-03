@@ -1,0 +1,2 @@
+LOGGER_NAME = 'pypgpqueue'
+LISTEN_TIMEOUT = 360
