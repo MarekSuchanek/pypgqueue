@@ -13,12 +13,14 @@ class Consumer:
     def __init__(self, db_config: DatabaseConfig, name: str):
         self.db_config = db_config
         self.name = name
-        self.conn = psycopg2.connect(db_config.connection_string)
-        self.conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+        self.conn_queue = psycopg2.connect(db_config.connection_string)
+        self.conn_query = psycopg2.connect(db_config.connection_string)
+        self.numbers = list()
+        self.conn_queue.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
 
     def _work(self):
         logger.info(f'Consumer {self.name}: working')
-        cursor = self.conn.cursor()
+        cursor = self.conn_query.cursor()
         cursor.execute(Database.SELECT_JOB)
         result = cursor.fetchall()
         if len(result) != 1:
@@ -28,6 +30,7 @@ class Consumer:
         logger.info(f'Consumer {self.name}: fetched job {job.id}')
         logger.info(f'Consumer {self.name}: message - {job.message}')
         logger.info(f'Consumer {self.name}: computing result')
+        self.numbers.append(job.number)
         result = job.number ** 2
         time.sleep(1)
         logger.info(f'Consumer {self.name}: result computed')
@@ -43,13 +46,13 @@ class Consumer:
             vars=(job.id,)
         )
         logger.info(f'Consumer {self.name}: committing')
-        self.conn.commit()
+        self.conn_query.commit()
         cursor.close()
         return True
 
     def run(self):
         logger.info(f'Consumer {self.name}: starting')
-        cursor = self.conn.cursor()
+        cursor = self.conn_queue.cursor()
         cursor.execute(Database.LISTEN)
 
         while True:
@@ -57,10 +60,14 @@ class Consumer:
             should_work = True
             while should_work:
                 should_work = self._work()
+
+            logger.info(f'Consumer {self.name} processed: {self.numbers}')
             logger.info(f'Consumer {self.name}: waiting for notifications')
-            if select.select([self.conn], [], [], LISTEN_TIMEOUT) == ([], [], []):
+            if select.select([self.conn_queue], [], [], LISTEN_TIMEOUT) == ([], [], []):
                 logger.info(f'Consumer {self.name}: nothing received in this cycle...')
             else:
-                self.conn.poll()
-                while self.conn.notifies:
-                    self.conn.notifies.pop()
+                self.conn_queue.poll()
+                notifications = []
+                while self.conn_queue.notifies:
+                    notifications.append(self.conn_queue.notifies.pop())
+                logger.info(f'Consumer {self.name}: {len(notifications)} notifications received')
